@@ -18,6 +18,11 @@ No Resource Locking: This server does not support resource locking (yet)
 ASGI: The server is implemented as an ASGI module.
 fs Module: Utilizes the [pyfilesystem2](https://github.com/PyFilesystem/pyfilesystem2) module for filesystem access.
 
+# Installation
+```shell
+pip install git+https://github.com/jrialland/asgi_dav@main
+```
+
 # Usage (uvicorn)
 ```python
 from asgi_dav import DAVApp

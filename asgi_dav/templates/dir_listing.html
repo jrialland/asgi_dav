@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Index of {{ path }}</title>
+    <style>
+
+        body {
+            font-family: sans-serif;
+            font-size: small;
+            margin: 1em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 0;
+        }
+
+        thead th {
+            font-weight: bold;
+            text-align: left;
+            border-bottom: 1px solid #ccc;
+        }
+
+        td:first-child {
+            width: 64px;
+            height: 64px;
+            text-indent:-9999px;
+            font-size: xx-small;
+            background-size: 64px;
+            background-attachment: center;
+            background-repeat: no-repeat;
+        }
+
+        tr.dir td:first-child {
+            background: url("{{ make_data_url('folder.svg', 'image/svg+xml') }}");
+        }
+
+        tr.file td:first-child {
+            background: url("{{ make_data_url('document.svg', 'image/svg+xml') }}");
+        }
+
+        footer {
+            margin-top: 2em;
+            border-top: 1px solid #ccc;
+            padding-top: 1em;
+            font-size: x-small;
+            color: #666;
+        }
+
+    </style>
+</head>
+<body>
+    <h1>Index of {{ path }}</hjson>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Name</th>
+                <th>Content Type</th>
+                <th>Size</th>
+            </tr>
+        </thead>
+        <tbody>
+            {# if the path is not the root, we add a link to the parent directory #}
+            {% if path != '/' %}
+                <tr class="dir">
+                    <td>dir</td>
+                    <td><a href="{{ concat_uri(path, '..') }}">..</a></td>
+                    <td></td>
+                    <td></td>
+                </tr>
+            {% endif %}
+
+            <tr class="dir">
+                <td>dir</td>
+                <td><a href="{{ concat_uri(path, '.') }}">.</a></td>
+                <td></td>
+                <td></td>
+            </tr>
+
+            {% for info in listing %}
+                <tr class="{{ 'dir' if info.is_dir else 'file' }}">
+                    <td>{{ 'dir' if info.is_dir else 'file' }}</td>
+                    <td><a href="{{ concat_uri(path, info.name) }}">{{ info.name }}</a></td>
+                    <td>
+                        {% if info.is_dir %}
+                            <em></em>
+                        {% else %}
+                            {% if info.contenttype %}
+                                {{ info.contenttype }}
+                            {% else %}
+                                <em>unknown</em>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if info.is_dir %}
+                            <em></em>
+                        {% else %}
+                            {{ naturalsize(info.size) }}
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    
+    <footer>
+        <p>Powered by <a href="http://github.com/jrialland/davserver">davserver</a></p>
+    </footer>
+</html>

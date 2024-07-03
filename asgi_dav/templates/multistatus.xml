@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>{{path}}</D:href>
+    <D:propstat>
+      <D:status>HTTP/1.1 200 OK</D:status>
+        <D:prop>
+          {% for key, value in props.items() %}
+            <{{key}}>{{value}}</{{key}}>
+          {% endfor %}
+        </D:prop>
+    </D:propstat>
+  </D:response>
+</D:multistatus>

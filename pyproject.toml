@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "asgi_dav"
+version = "0.1.0"
+description = "ASGI WebDAV implementation"
+authors = ["Julien Rialland <julien.rialland@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fs = "^2.4.16"
+asgiref = "^3.8.1"
+jinja2 = "^3.1.4"
+humanize = "^4.9.0"
+
+[tool.poetry.extras]
+caching = ["uvicorn", "redis"]
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4.2"
+mypy = "^1.10.1"
+pytest = "^8.2.2"
+async-asgi-testclient = "^1.4.11"
+pytest-asyncio = "^0.23.7"
+uvicorn = "^0.30.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

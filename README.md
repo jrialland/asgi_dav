@@ -16,7 +16,7 @@ No Resource Locking: This server does not support resource locking (yet)
 
 # Dependencies
 ASGI: The server is implemented as an ASGI module.
-fs Module: Utilizes the fs module for filesystem access.
+fs Module: Utilizes the [pyfilesystem2](https://github.com/PyFilesystem/pyfilesystem2) module for filesystem access.
 
 # Usage (uvicorn)
 ```python

@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Index of {{ path }}</title>
+    <title>Index of {{ href }}</title>
     <style>
-
         body {
             font-family: sans-serif;
             font-size: small;
@@ -27,7 +27,7 @@
         td:first-child {
             width: 64px;
             height: 64px;
-            text-indent:-9999px;
+            text-indent: -9999px;
             font-size: xx-small;
             background-size: 64px;
             background-attachment: center;
@@ -49,67 +49,70 @@
             font-size: x-small;
             color: #666;
         }
-
     </style>
 </head>
+
 <body>
-    <h1>Index of {{ path }}</hjson>
-    <table>
-        <thead>
-            <tr>
-                <th>Type</th>
-                <th>Name</th>
-                <th>Content Type</th>
-                <th>Size</th>
-            </tr>
-        </thead>
-        <tbody>
-            {# if the path is not the root, we add a link to the parent directory #}
-            {% if path != '/' %}
+    <h1>Index of {{ href }}</hjson>
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Name</th>
+                    <th>Content Type</th>
+                    <th>Size</th>
+                    <th>Last Modified</th>
+                </tr>
+            </thead>
+            <tbody>
+                {# if the path is not the root, we add a link to the parent directory #}
+                {% if path != '/' %}
                 <tr class="dir">
                     <td>dir</td>
-                    <td><a href="{{ concat_uri(path, '..') }}">..</a></td>
+                    <td><a href="..">..</a></td>
                     <td></td>
                     <td></td>
                 </tr>
-            {% endif %}
+                {% endif %}
 
-            <tr class="dir">
-                <td>dir</td>
-                <td><a href="{{ concat_uri(path, '.') }}">.</a></td>
-                <td></td>
-                <td></td>
-            </tr>
+                <tr class="dir">
+                    <td>dir</td>
+                    <td><a href="{{ href }}">.</a></td>
+                    <td></td>
+                    <td></td>
+                </tr>
 
-            {% for info in listing %}
+                {% for info in listing %}
                 <tr class="{{ 'dir' if info.is_dir else 'file' }}">
                     <td>{{ 'dir' if info.is_dir else 'file' }}</td>
-                    <td><a href="{{ concat_uri(path, info.name) }}">{{ info.name }}</a></td>
+                    <td><a href="{{ info.href }}">{{ info.name }}</a></td>
                     <td>
                         {% if info.is_dir %}
-                            <em></em>
+                        <em></em>
                         {% else %}
-                            {% if info.contenttype %}
-                                {{ info.contenttype }}
-                            {% else %}
-                                <em>unknown</em>
-                            {% endif %}
+                        {% if info.content_type %}
+                        {{ info.content_type }}
+                        {% else %}
+                        <em></em>
+                        {% endif %}
                         {% endif %}
                     </td>
                     <td>
                         {% if info.is_dir %}
-                            <em></em>
+                        <em></em>
                         {% else %}
-                            {{ naturalsize(info.size) }}
+                        {{ naturalsize(info.size) }}
                         {% endif %}
                     </td>
+                    <td>{{ info.lastmodified }}</td>
                 </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                {% endfor %}
+            </tbody>
+        </table>
 
-    
-    <footer>
-        <p>Powered by <a href="http://github.com/jrialland/davserver">davserver</a></p>
-    </footer>
+        <footer>
+            <p>Powered by <a href="http://github.com/jrialland/asgi_dav">asgi_dav</a></p>
+        </footer>
+</body>
+
 </html>

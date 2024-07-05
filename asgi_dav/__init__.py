@@ -9,17 +9,18 @@ from asgiref.typing import (
     ASGIReceiveCallable,
     ASGISendCallable,
 )
-import datetime
-import mimetypes
-from urllib.parse import quote, unquote, urlparse
+
+from urllib.parse import unquote, urlparse, parse_qs
 from fs.base import FS
-from fs.info import Info
 from jinja2 import Environment, PackageLoader
 import humanize
 import re
 from xml.dom.minidom import parseString, Document
 from hashlib import md5
 import http.client  # for HTTP status codes constants
+from .utils import concat_uri, make_data_url
+from .props import FileProps, PropfindResponseBuilder
+
 # ------------------------------------------------------------------------------
 __version__ = "0.1.0"
 __author__ = "Julien Rialland"
@@ -34,106 +35,25 @@ MAX_DIR_LISTING = 10000
 
 
 # ------------------------------------------------------------------------------
-class FileProps:
-    """
-    A class that wraps a FS Info object to provide the properties of a file
-    objects of this class are used in Jinja templates to display file properties
-    """
-
-    def __init__(self, info: Info):
-        self.info = info
-
-    @property
-    def name(self) -> str:
-        return self.info.name
-
-    @property
-    def contentlength(self) -> int:
-        return self.info.size
-
-    @property
-    def is_dir(self) -> bool:
-        return self.info.is_dir
-
-    @property
-    def is_file(self) -> bool:
-        return self.info.is_file
-
-    @property
-    def size(self) -> int:
-        return self.info.size if self.info.is_file else 0
-
-    @property
-    def lastmodified(self) -> float:
-        dt = self.info.modified or datetime.datetime.min
-        return dt.strftime("%a, %d %b %Y %H:%M:%S GMT")
-
-    @property
-    def contenttype(self) -> str:
-        mimetype, encoding = mimetypes.guess_type(self.info.name)
-        if mimetype:
-            content_type = mimetype
-            if encoding:
-                content_type += f"; charset={encoding}"
-        else:
-            content_type = "application/octet-stream"
-        return content_type
-
-    def __lt__(self, other: "FileProps") -> bool:
-        if self.is_dir and not other.is_dir:
-            return True
-        elif not self.is_dir and other.is_dir:
-            return False
-        else:
-            return self.name < other.name
-
-
-# ------------------------------------------------------------------------------
-def concat_uri(*parts: str) -> str:
-    """
-    Concatenate URL parts with a slash
-    """
-    is_absolute = parts[0].startswith("/")
-    r = "/".join(map(lambda p: quote(p.strip("/")), parts))
-    if is_absolute:
-        if not r.startswith("/"):
-            r = "/" + r
-    else:
-        if r.startswith("/"):
-            r = r[1:]
-    return r
-
-# ------------------------------------------------------------------------------
-def make_data_url(filename: str, mimetype: str) -> str:
-    """
-    Create a data URL for a file, used for embedding images in HTML
-    """
-    from pathlib import Path
-    from base64 import b64encode
-    path = Path(__file__).parent / "templates" / filename
-    with path.open("rb") as f:
-        data = f.read()
-    return f"data:{mimetype};base64,{b64encode(data).decode()}"
-
-# ------------------------------------------------------------------------------
 class DAVApp:
     """
     An ASGI application that handles WebDAV requests
     """
 
-    def __init__(self, fs: FS, path_prefix: str = ""):
+    def __init__(self, fs: FS, path_prefix: str|None = None):
         """
         Create a new DAVApp instance
         :param fs: the filesystem to use
         """
         assert fs, "fs is required"
-        assert path_prefix == "" or path_prefix.startswith("/"), "path_prefix must start with a slash"
-
+        assert path_prefix is None or path_prefix == "" or path_prefix.startswith(
+            "/"
+        ), "path_prefix must start with a slash if not empty"
 
         self.fs = fs
-        self.path_prefix = path_prefix[:-1] if path_prefix.endswith("/") else path_prefix
+        path_prefix = path_prefix or ""
+        self.path_prefix = '/' + path_prefix.strip("/")
         self.jinja_env = Environment(loader=PackageLoader(__name__, "templates"))
-        self.jinja_env.globals["concat_uri"] = concat_uri
         self.jinja_env.globals["make_data_url"] = make_data_url
         self.jinja_env.globals["naturalsize"] = humanize.naturalsize
         self.handlers = {
@@ -163,6 +83,12 @@ class DAVApp:
                     await send({"type": "lifespan.shutdown.complete"})
                     return
         elif scope["type"] == "http":
+
+            # prevent requests that don't start with the path prefix
+            if not scope["path"].startswith(self.path_prefix):
+                await self.respond(send, http.client.NOT_FOUND, b"Not found")
+                return
+
             handler = self.handlers.get(scope["method"], self.not_implemented)
             await handler(scope, receive, send)
         else:
@@ -185,17 +111,24 @@ class DAVApp:
         }
         await self.respond(send, http.client.OK, b"OK", headers)
 
-    def _get_path(self, scope: HTTPScope) -> str:
+    def _get_path_and_href(self, scope: HTTPScope) -> tuple[str, str]:
         path = scope["path"]
         if path.startswith(self.path_prefix):
             path = path[len(self.path_prefix) :]
-        return path
+        if path == "":
+            path = "/"
+        return path, concat_uri(self.path_prefix, path)
+
+    def _get_parent_href(self, path: str) -> str:
+        parts = concat_uri(self.path_prefix, path).split("/")
+        parts.pop()
+        return concat_uri(self.path_prefix, *parts)
 
     async def copy_or_move(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
     ):
         is_copy = scope["method"] == "COPY"
-        path = self._get_path(scope)
+        path, href = self._get_path_and_href(scope)
         destination = self.get_first_header(scope, "Destination")
         if destination is None:
             await self.respond(send, http.client.BAD_REQUEST, b"Bad Request")
@@ -203,6 +136,10 @@ class DAVApp:
 
         # destination is an absolute URI, so we need to extract the path
         destination = unquote(urlparse(destination).path)
+
+        # remove the path prefix from the destination
+        if destination.startswith(self.path_prefix):
+            destination = destination[len(self.path_prefix) :]
 
         overwrite = self.get_first_header(scope, "Overwrite") == "T"
         if self.fs.exists(destination):
@@ -226,26 +163,27 @@ class DAVApp:
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
     ):
         is_head = scope["method"] == "HEAD"
-        path = self._get_path(scope)
+        path, href = self._get_path_and_href(scope)
         if not self.fs.exists(path):
             await self.respond(send, http.client.NOT_FOUND, b"Not found")
             return
         if self.fs.isdir(path):
-            await self.send_dir_listing(send, path, is_head=is_head)
+            query = parse_qs(scope['query_string'].decode())
+            if query.get('propfind'):
+                await self.propfind(scope, receive, send)
+            else:
+                await self.send_dir_listing(send, path, href, is_head=is_head)
         else:
             await self.send_file(scope, receive, send, path, is_head=is_head)
 
     async def put(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
     ):
-        path = self._get_path(scope)
+        path, href = self._get_path_and_href(scope)
 
         if self.fs.isdir(path):
             await self.respond(send, http.client.METHOD_NOT_ALLOWED)
             return
-
-        # if self.get_first_header(scope, "Expect") == "100-continue":
-        #     await send({"type": "http.response.start", "status": 100, "headers": []})
 
         remaining = int(self.get_first_header(scope, "Content-Length") or 0)
         if remaining == 0:
@@ -265,7 +203,7 @@ class DAVApp:
     async def delete(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
     ):
-        path = self._get_path(scope)
+        path, href = self._get_path_and_href(scope)
         if not self.fs.exists(path):
             await self.respond(send, http.client.NOT_FOUND)
             return
@@ -276,7 +214,7 @@ class DAVApp:
     async def mkcol(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
     ):
-        path = self._get_path(scope)
+        path, href = self._get_path_and_href(scope)
         if self.fs.exists(path):
             await self.respond(send, 405, b"Method Not Allowed")
             return
@@ -287,38 +225,48 @@ class DAVApp:
     async def propfind(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
     ):
-        path = self._get_path(scope)
+        path, href = self._get_path_and_href(scope)
 
         if not self.fs.exists(path):
             await self.respond(send, http.client.NOT_FOUND, b"Not found")
             return
 
         depth = self.get_first_header(scope, "Depth")
+        if not depth:
+            depth = "1"
+
+        builder = PropfindResponseBuilder()
+        builder.add_response(
+            href,
+            FileProps(
+                self.fs.getinfo(path, ["details"]), self._get_parent_href(path)
+            ).props,
+        )
 
         if depth == "0":
-            await self.send_propfind(
-                send, path, [FileProps(self.fs.getinfo(path))], depth
-            )
-
+            pass
         elif depth == "1" or depth is None:
-            listing = [FileProps(self.fs.getinfo(path))] + [
-                FileProps(info)
+            fprops = [
+                FileProps(info, href)
                 for info in self.fs.scandir(path, namespaces=["details"])
                 if info.name[0] != "."
             ]
-            listing.sort()
-            # depth 1 : get infos about the requested resource and its children
-            await self.send_propfind(
-                send,
-                path,
-                listing,
-                depth,
-            )
-
+            fprops.sort()
+            for fileprop in fprops:
+                builder.add_response(fileprop.href, fileprop.props)
         elif depth == "infinity":
             await self.respond(send, http.client.NOT_IMPLEMENTED, b"Not implemented")
+            return
         else:
             await self.respond(send, http.client.BAD_REQUEST, b"Bad Request")
+            return
+
+        await self.respond(
+            send,
+            http.client.MULTI_STATUS,
+            builder.to_xml(),
+            {"Content-Type": "text/xml"},
+        )
 
     async def proppatch(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
@@ -326,7 +274,8 @@ class DAVApp:
         """
         Handle PROPPATCH requests : parse propstat xml, change props, and return a multistatus response
         """
-        path = self._get_path(scope)
+        raw_path = scope["path"]
+        path, href = self._get_path_and_href(scope)
 
         if not self.fs.exists(path):
             await self.respond(send, http.client.NOT_FOUND, b"Not found")
@@ -356,7 +305,7 @@ class DAVApp:
         output = f"""<?xml version="1.0" encoding="utf-8" ?>
         <{dav_ns}:multistatus {xmlns}>
             <{dav_ns}:response>
-                <{dav_ns}:href>{path}</{dav_ns}:href>
+                <{dav_ns}:href>{raw_path}</{dav_ns}:href>
                 <{dav_ns}:propstat>
                     <{dav_ns}:prop>
                         {''.join([f'<{k}>{v}</{k}>' for k, v in props.items()])}
@@ -368,15 +317,6 @@ class DAVApp:
         """
         await self.respond(
             send, http.client.MULTI_STATUS, output, {"Content-Type": "text/xml"}
-        )
-
-    async def send_propfind(
-        self, send: ASGISendCallable, path: str, listing: list[FileProps], depth: str
-    ):
-        template = self.jinja_env.get_template("propfind.xml")
-        body = template.render(path=path, listing=listing, depth=depth)
-        await self.respond(
-            send, http.client.MULTI_STATUS, body, {"Content-Type": "text/xml"}
         )
 
     async def not_implemented(
@@ -426,29 +366,22 @@ class DAVApp:
         )
 
     async def send_dir_listing(
-        self, send: ASGISendCallable, path: str, is_head: bool = False
+        self, send: ASGISendCallable, path: str, href:str, is_head: bool = False
     ):
         template = self.jinja_env.get_template("dir_listing.html")
         listing = [
-            FileProps(info)
+            FileProps(info, href)
             for info in self.fs.scandir(path, namespaces=["details"])
             if info.name[0] != "."
         ]
         listing.sort()
-        body = template.render(path=path, listing=listing)
+        body = template.render(path=path, href=href, listing=listing)
         await self.respond(
             send,
             http.client.OK,
             body if not is_head else b"",
             {"Content-Type": "text/html; charset=utf-8"},
         )
-
-    def compute_etag(self, info: Info) -> str:
-        digest = md5()
-        digest.update(info.name.encode())
-        digest.update(str(info.size).encode())
-        digest.update(info.modified.strftime("%Y-%m-%d %H:%M:%S").encode())
-        return digest.hexdigest()
 
     def is_unmodified(self, scope: HTTPScope, etag: str) -> bool:
         if_none_match = self.get_first_header(scope, "If-None-Match")
@@ -467,45 +400,36 @@ class DAVApp:
         path: str,
         is_head: bool = False,
     ):
-        info: Info = self.fs.getinfo(path, ["details"])
+        props = FileProps(self.fs.getinfo(path, ["details"]), self._get_parent_href(path))
 
-        etag = self.compute_etag(info)
-
-        if self.is_unmodified(scope, etag):
+        if self.is_unmodified(scope, props.etag):
             await self.respond(send, 304)
             return
 
-        mimetype, encoding = mimetypes.guess_type(path)
-        if mimetype:
-            content_type = mimetype
-            if encoding:
-                content_type += f"; charset={encoding}"
-        else:
-            content_type = "application/octet-stream"
         range = self.get_first_header(scope, "range")
         if range:
             start, end = self.parse_range(range)
             start = max(0, start)
-            end = min(info.size - 1, end)
+            end = min(props.size - 1, end)
             content_length = end - start + 1
             status = http.client.PARTIAL_CONTENT
             headers = [
-                (b"Content-Range", f"bytes {start}-{end}/{info.size}".encode()),
+                (b"Content-Range", f"bytes {start}-{end}/{props.size}".encode()),
             ]
         else:
             start = 0
-            end = info.size - 1
-            content_length = info.size
+            end = props.size - 1
+            content_length = props.size
             status = http.client.OK
             headers = []
 
         headers += [
-            (b"Content-Type", content_type.encode()),
-            (b"ETag", b'"' + etag.encode() + b'"'),
+            (b"Content-Type", props.content_type.encode()),
+            (b"ETag", b'"' + props.etag.encode() + b'"'),
             (b"Content-Length", str(content_length).encode()),
             (
                 b"Last-Modified",
-                info.modified.strftime("%a, %d %b %Y %H:%M:%S GMT").encode(),
+                props.lastmodified.encode(),
             ),
             (b"Accept-Ranges", b"bytes"),
         ]

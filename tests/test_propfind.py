@@ -44,4 +44,4 @@ async def test_propfind_folder_depth_infinity():
     app = DAVApp(fs)
     async with TestClient(app) as client:
         response = await client.open("/foo", method="PROPFIND", headers={"Depth": "infinity"})
-        assert response.status_code == 207
+        assert response.status_code == 501

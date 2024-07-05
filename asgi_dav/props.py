@@ -3,8 +3,7 @@ import datetime
 from typing import TextIO
 from fs.info import Info
 from xml.etree.ElementTree import Element, ElementTree
-from .utils import concat_uri, to_rfc_1123
-import mimetypes
+from .utils import concat_uri, to_rfc_1123, guess_contenttype
 from hashlib import md5
 
 
@@ -37,7 +36,7 @@ class FileProps:
 
     @property
     def name(self) -> str:
-        return self.info.name
+        return self.info.name or '/'
 
     @property
     def contentlength(self) -> int:
@@ -63,38 +62,31 @@ class FileProps:
     @property
     def creationdate(self) -> str:
         dt = self.info.created or datetime.datetime.min
-        return to_rfc_1123(dt)
+        return dt.isoformat()
 
     @property
     def content_type(self) -> str:
         if self._contenttype is None:
-            mimetype, encoding = mimetypes.guess_type(self.info.name)
-            if mimetype:
-                self._contenttype = mimetype
-                if encoding:
-                    self._contenttype += f"; charset={encoding}"
-            else:
-                self._contenttype = "application/octet-stream"
+            self._contenttype = guess_contenttype(self.name)
         return self._contenttype
 
     @property
     def props(self) -> dict[str, str]:
         props = {
             "D:displayname": self.name,
-            "D:getcontentlength": str(self.contentlength),
             "D:getcontenttype": self.content_type,
-            #"D:creationdate": self.creationdate,
+            "D:creationdate": self.creationdate,
             "D:getlastmodified": self.lastmodified,
         }
         if self.info.is_dir:
             props.update({
-                "D:getcontentlength": "0",
                 "D:getcontenttype": "httpd/unix-directory",
             })
         else:
             props.update({
-                "D:getcontentlength": str(self.info.size),
-                "D:getcontenttype": self.content_type
+                "D:getcontentlength": str(self.contentlength),
+                "D:getcontenttype": self.content_type,
+                "D:getetag": self.etag,
             })
         return props
 
@@ -111,8 +103,9 @@ class FileProps:
 class PropfindResponseBuilder:
 
     class Response:
-        def __init__(self, href: str, properties: dict[str, str] | None = None):
+        def __init__(self, href: str, is_dir:bool, properties: dict[str, str] | None = None):
             self.href = href
+            self.is_dir = is_dir
             self.properties = properties or {}
             self.status = "HTTP/1.1 200 OK"
 
@@ -124,16 +117,28 @@ class PropfindResponseBuilder:
             href_element = Element("D:href")
             href_element.text = self.href
             response.append(href_element)
+
             propstat = Element("D:propstat")
+            
             prop = Element("D:prop")
+
+            
+            if self.is_dir:
+                resourcetype = Element("D:resourcetype")
+                resourcetype.append(Element("D:collection"))
+                prop.append(resourcetype)
+
             for key, value in self.properties.items():
                 prop_element = Element(key)
                 prop_element.text = value
                 prop.append(prop_element)
+            
+            propstat.append(prop)
+
             status = Element("D:status")
             status.text = self.status
             propstat.append(status)
-            propstat.append(prop)
+            
             response.append(propstat)
             return response
 
@@ -141,8 +146,8 @@ class PropfindResponseBuilder:
         self.namespaces = {"D": "DAV:"}
         self._responses: list["PropfindResponseBuilder.Response"] = []
 
-    def add_response(self, href: str, properties: dict[str, str] | None = None):
-        self._responses.append(PropfindResponseBuilder.Response(href, properties))
+    def add_response(self, fp: FileProps):
+        self._responses.append(PropfindResponseBuilder.Response(fp.href, fp.is_dir, fp.props))
 
     def write(self, out: TextIO):
         multistatus = Element("D:multistatus")

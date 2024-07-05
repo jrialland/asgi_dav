@@ -18,7 +18,7 @@ import re
 from xml.dom.minidom import parseString, Document
 from hashlib import md5
 import http.client  # for HTTP status codes constants
-from .utils import concat_uri, make_data_url
+from .utils import concat_uri, make_data_url, get_parent_href
 from .props import FileProps, PropfindResponseBuilder
 
 # ------------------------------------------------------------------------------
@@ -40,22 +40,17 @@ class DAVApp:
     An ASGI application that handles WebDAV requests
     """
 
-    def __init__(self, fs: FS, path_prefix: str|None = None):
+    def __init__(self, fs: FS):
         """
         Create a new DAVApp instance
         :param fs: the filesystem to use
         """
         assert fs, "fs is required"
-        assert path_prefix is None or path_prefix == "" or path_prefix.startswith(
-            "/"
-        ), "path_prefix must start with a slash if not empty"
-
         self.fs = fs
-        path_prefix = path_prefix or ""
-        self.path_prefix = '/' + path_prefix.strip("/")
         self.jinja_env = Environment(loader=PackageLoader(__name__, "templates"))
         self.jinja_env.globals["make_data_url"] = make_data_url
         self.jinja_env.globals["naturalsize"] = humanize.naturalsize
+        self.jinja_env.globals["get_parent_href"] = get_parent_href
         self.handlers = {
             "HEAD": self.get_or_head,
             "GET": self.get_or_head,
@@ -83,12 +78,6 @@ class DAVApp:
                     await send({"type": "lifespan.shutdown.complete"})
                     return
         elif scope["type"] == "http":
-
-            # prevent requests that don't start with the path prefix
-            if not scope["path"].startswith(self.path_prefix):
-                await self.respond(send, http.client.NOT_FOUND, b"Not found")
-                return
-
             handler = self.handlers.get(scope["method"], self.not_implemented)
             await handler(scope, receive, send)
         else:
@@ -112,17 +101,11 @@ class DAVApp:
         await self.respond(send, http.client.OK, b"OK", headers)
 
     def _get_path_and_href(self, scope: HTTPScope) -> tuple[str, str]:
-        path = scope["path"]
-        if path.startswith(self.path_prefix):
-            path = path[len(self.path_prefix) :]
+        root_path = scope.get("root_path", "")
+        path = scope['path'][len(root_path) :]
         if path == "":
             path = "/"
-        return path, concat_uri(self.path_prefix, path)
-
-    def _get_parent_href(self, path: str) -> str:
-        parts = concat_uri(self.path_prefix, path).split("/")
-        parts.pop()
-        return concat_uri(self.path_prefix, *parts)
+        return path, concat_uri(root_path, path)
 
     async def copy_or_move(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
@@ -136,10 +119,10 @@ class DAVApp:
 
         # destination is an absolute URI, so we need to extract the path
         destination = unquote(urlparse(destination).path)
-
-        # remove the path prefix from the destination
-        if destination.startswith(self.path_prefix):
-            destination = destination[len(self.path_prefix) :]
+        root_path = scope.get("root_path", "")
+        destination = destination[len(root_path) :]
+        if destination == "":
+            destination = "/"
 
         overwrite = self.get_first_header(scope, "Overwrite") == "T"
         if self.fs.exists(destination):
@@ -174,7 +157,8 @@ class DAVApp:
             else:
                 await self.send_dir_listing(send, path, href, is_head=is_head)
         else:
-            await self.send_file(scope, receive, send, path, is_head=is_head)
+
+            await self.send_file(scope, send, path, FileProps(self.fs.getinfo(path, ["details"]), href), is_head=is_head)
 
     async def put(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
@@ -236,12 +220,10 @@ class DAVApp:
             depth = "1"
 
         builder = PropfindResponseBuilder()
-        builder.add_response(
-            href,
-            FileProps(
-                self.fs.getinfo(path, ["details"]), self._get_parent_href(path)
-            ).props,
-        )
+        if path == "/":
+            builder.add_response(FileProps(self.fs.getinfo("/", ["details"]), href))
+        else:
+            builder.add_response(FileProps(self.fs.getinfo(path, ["details"]), get_parent_href(href)))
 
         if depth == "0":
             pass
@@ -253,7 +235,7 @@ class DAVApp:
             ]
             fprops.sort()
             for fileprop in fprops:
-                builder.add_response(fileprop.href, fileprop.props)
+                builder.add_response(fileprop)
         elif depth == "infinity":
             await self.respond(send, http.client.NOT_IMPLEMENTED, b"Not implemented")
             return
@@ -395,14 +377,12 @@ class DAVApp:
     async def send_file(
         self,
         scope: HTTPScope,
-        receive: ASGIReceiveCallable,
         send: ASGISendCallable,
         path: str,
+        fp: FileProps,
         is_head: bool = False,
     ):
-        props = FileProps(self.fs.getinfo(path, ["details"]), self._get_parent_href(path))
-
-        if self.is_unmodified(scope, props.etag):
+        if self.is_unmodified(scope, fp.etag):
             await self.respond(send, 304)
             return
 
@@ -410,7 +390,7 @@ class DAVApp:
         if range:
             start, end = self.parse_range(range)
             start = max(0, start)
-            end = min(props.size - 1, end)
+            end = min(fp.size - 1, end)
             content_length = end - start + 1
             status = http.client.PARTIAL_CONTENT
             headers = [
@@ -418,18 +398,18 @@ class DAVApp:
             ]
         else:
             start = 0
-            end = props.size - 1
-            content_length = props.size
+            end = fp.size - 1
+            content_length = fp.size
             status = http.client.OK
             headers = []
 
         headers += [
-            (b"Content-Type", props.content_type.encode()),
-            (b"ETag", b'"' + props.etag.encode() + b'"'),
+            (b"Content-Type", fp.content_type.encode()),
+            (b"ETag", b'"' + fp.etag.encode() + b'"'),
             (b"Content-Length", str(content_length).encode()),
             (
                 b"Last-Modified",
-                props.lastmodified.encode(),
+                fp.lastmodified.encode(),
             ),
             (b"Accept-Ranges", b"bytes"),
         ]

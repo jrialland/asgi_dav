@@ -43,8 +43,7 @@ from fs.memoryfs import MemoryFS # use an in-RAM filesystem for the example
 app = FastAPI()
 
 # Mount the DAVApp as a sub-application in FastAPI.
-dav_app = DAVApp(MemoryFS(), '/dav') # the second parameter makes http://localhost:8080/dav map to / in the filesystem
-app.mount("/dav", dav_app)
+app.mount("/dav", DAVApp(MemoryFS()))
 
 ```
 

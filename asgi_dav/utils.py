@@ -21,8 +21,12 @@ def to_rfc_1123(dt: datetime.datetime) -> str:
     """
     Convert a datetime object to a string in RFC 1123 format
     """
-    return dt.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    return (dt or datetime.datetime.min).strftime("%a, %d %b %Y %H:%M:%S GMT")
 
+# ------------------------------------------------------------------------------
+def to_iso_8601(dt: datetime.datetime) -> str:
+    """a datetime object to a string in ISO 8601 format. datetime.isoformat() does not include the 'Z' at the end, which is required by the WebDAV spec."""
+    return (dt or datetime.datetime.min).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # ------------------------------------------------------------------------------
 def guess_contenttype(filename: str, include_charset: bool = True) -> str:

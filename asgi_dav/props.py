@@ -3,7 +3,7 @@ import datetime
 from typing import TextIO
 from fs.info import Info
 from xml.etree.ElementTree import Element, ElementTree
-from .utils import concat_uri, to_rfc_1123, guess_contenttype
+from .utils import concat_uri, to_rfc_1123, to_iso_8601, guess_contenttype
 from hashlib import md5
 
 
@@ -62,7 +62,7 @@ class FileProps:
     @property
     def creationdate(self) -> str:
         dt = self.info.created or datetime.datetime.min
-        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        return to_iso_8601(dt)
 
     @property
     def content_type(self) -> str:

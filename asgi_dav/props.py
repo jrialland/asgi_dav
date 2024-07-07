@@ -36,7 +36,7 @@ class FileProps:
 
     @property
     def name(self) -> str:
-        return self.info.name or '/'
+        return self.info.name or "/"
 
     @property
     def contentlength(self) -> int:
@@ -78,15 +78,19 @@ class FileProps:
             "D:getlastmodified": self.lastmodified,
         }
         if self.info.is_dir:
-            props.update({
-                "D:getcontenttype": "httpd/unix-directory",
-            })
+            props.update(
+                {
+                    "D:getcontenttype": "httpd/unix-directory",
+                }
+            )
         else:
-            props.update({
-                "D:getcontentlength": str(self.contentlength),
-                "D:getcontenttype": self.content_type,
-                "D:getetag": self.etag,
-            })
+            props.update(
+                {
+                    "D:getcontentlength": str(self.contentlength),
+                    "D:getcontenttype": self.content_type,
+                    "D:getetag": self.etag,
+                }
+            )
         return props
 
     def __lt__(self, other: "FileProps") -> bool:
@@ -102,7 +106,9 @@ class FileProps:
 class PropfindResponseBuilder:
 
     class Response:
-        def __init__(self, href: str, is_dir:bool, properties: dict[str, str] | None = None):
+        def __init__(
+            self, href: str, is_dir: bool, properties: dict[str, str] | None = None
+        ):
             self.href = href
             self.is_dir = is_dir
             self.properties = properties or {}
@@ -118,7 +124,7 @@ class PropfindResponseBuilder:
             response.append(href_element)
 
             propstat = Element("D:propstat")
-            
+
             prop = Element("D:prop")
 
             resourcetype = Element("D:resourcetype")
@@ -130,13 +136,13 @@ class PropfindResponseBuilder:
                 prop_element = Element(key)
                 prop_element.text = value
                 prop.append(prop_element)
-            
+
             propstat.append(prop)
 
             status = Element("D:status")
             status.text = self.status
             propstat.append(status)
-            
+
             response.append(propstat)
             return response
 
@@ -145,7 +151,9 @@ class PropfindResponseBuilder:
         self._responses: list["PropfindResponseBuilder.Response"] = []
 
     def add_response(self, fp: FileProps):
-        self._responses.append(PropfindResponseBuilder.Response(fp.href, fp.is_dir, fp.props))
+        self._responses.append(
+            PropfindResponseBuilder.Response(fp.href, fp.is_dir, fp.props)
+        )
 
     def write(self, out: TextIO):
         multistatus = Element("D:multistatus")
@@ -153,11 +161,11 @@ class PropfindResponseBuilder:
             multistatus.set(f"xmlns:{key}", value)
         document = ElementTree(multistatus)
 
-        #document.getroot().append(self._responses[0].to_element())
+        # document.getroot().append(self._responses[0].to_element())
 
         for response in self._responses:
             document.getroot().append(response.to_element())
-        
+
         document.write(out, encoding="unicode", xml_declaration=True)
 
     def to_xml(self) -> str:

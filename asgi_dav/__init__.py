@@ -12,6 +12,7 @@ from asgiref.typing import (
 
 from urllib.parse import unquote, urlparse, parse_qs
 from fs.base import FS
+import fs.errors
 from jinja2 import Environment, PackageLoader
 import humanize
 import re
@@ -102,7 +103,7 @@ class DAVApp:
 
     def _get_path_and_href(self, scope: HTTPScope) -> tuple[str, str]:
         root_path = scope.get("root_path", "")
-        path = scope['path'][len(root_path) :]
+        path = scope["path"][len(root_path) :]
         if path == "":
             path = "/"
         return path, concat_uri(root_path, path)
@@ -125,22 +126,32 @@ class DAVApp:
             destination = "/"
 
         overwrite = self.get_first_header(scope, "Overwrite") == "T"
-        if self.fs.exists(destination):
-            await self.respond(send, http.client.FORBIDDEN, b"Forbidden")
+
+        try:
+            if is_copy:
+                if self.fs.isdir(path):
+                    self.fs.copydir(path, destination, create=True)
+                else:
+                    self.fs.copy(path, destination, overwrite=overwrite)
+            else:
+                if self.fs.isdir(path):
+                    self.fs.movedir(path, destination, create=True)
+                else:
+                    self.fs.move(path, destination, overwrite=overwrite)
+        except fs.errors.FileExpected:
+            await self.respond(send, http.client.BAD_REQUEST, b"Bad Request")
+            return
+        except fs.errors.ResourceNotFound:
+            await self.respond(send, http.client.NOT_FOUND, b"Not found")
+            return
+        except fs.errors.DestinationExists:
+            await self.respond(send, http.client.CONFLICT, b"Conflict")
             return
 
         if is_copy:
-            if self.fs.isdir(path):
-                self.fs.copydir(path, destination, create=True)
-            else:
-                self.fs.copy(path, destination, overwrite=overwrite)
+            await self.respond(send, http.client.CREATED, b"Created")
         else:
-            if self.fs.isdir(path):
-                self.fs.movedir(path, destination, create=True)
-            else:
-                self.fs.move(path, destination, overwrite=overwrite)
-
-        await self.respond(send, http.client.CREATED, b"Created")
+            await self.respond(send, http.client.NO_CONTENT)
 
     async def get_or_head(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
@@ -151,14 +162,20 @@ class DAVApp:
             await self.respond(send, http.client.NOT_FOUND, b"Not found")
             return
         if self.fs.isdir(path):
-            query = parse_qs(scope['query_string'].decode())
-            if query.get('propfind'):
+            query = parse_qs(scope["query_string"].decode())
+            if query.get("propfind"):
                 await self.propfind(scope, receive, send)
             else:
                 await self.send_dir_listing(send, path, href, is_head=is_head)
         else:
 
-            await self.send_file(scope, send, path, FileProps(self.fs.getinfo(path, ["details"]), href), is_head=is_head)
+            await self.send_file(
+                scope,
+                send,
+                path,
+                FileProps(self.fs.getinfo(path, ["details"]), href),
+                is_head=is_head,
+            )
 
     async def put(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
@@ -170,9 +187,6 @@ class DAVApp:
             return
 
         remaining = int(self.get_first_header(scope, "Content-Length") or 0)
-        if remaining == 0:
-            await self.respond(send, http.client.LENGTH_REQUIRED)
-            return
 
         with self.fs.open(path, "wb" if self.fs.isfile(path) else "xb") as f:
             while remaining > 0:
@@ -223,7 +237,9 @@ class DAVApp:
         if path == "/":
             builder.add_response(FileProps(self.fs.getinfo("/", ["details"]), href))
         else:
-            builder.add_response(FileProps(self.fs.getinfo(path, ["details"]), get_parent_href(href)))
+            builder.add_response(
+                FileProps(self.fs.getinfo(path, ["details"]), get_parent_href(href))
+            )
 
         if depth == "0":
             pass
@@ -348,7 +364,7 @@ class DAVApp:
         )
 
     async def send_dir_listing(
-        self, send: ASGISendCallable, path: str, href:str, is_head: bool = False
+        self, send: ASGISendCallable, path: str, href: str, is_head: bool = False
     ):
         template = self.jinja_env.get_template("dir_listing.html")
         listing = [

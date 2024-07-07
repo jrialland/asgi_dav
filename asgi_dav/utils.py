@@ -9,10 +9,9 @@ def concat_uri(*parts: str) -> str:
     """
     Concatenate URL parts with a slash
     """
-    starts_with_slash = parts[0].startswith("/")
     stripped_parts = [p.strip("/") for p in parts]
     filtered_parts = [quote(p) for p in stripped_parts if p]
-    return f"{'/' if starts_with_slash else ''}{'/'.join(filtered_parts)}"
+    return f"/{'/'.join(filtered_parts)}"
 
 # ------------------------------------------------------------------------------
 def to_rfc_1123(dt: datetime.datetime) -> str:

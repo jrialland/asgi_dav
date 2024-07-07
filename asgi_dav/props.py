@@ -62,7 +62,7 @@ class FileProps:
     @property
     def creationdate(self) -> str:
         dt = self.info.created or datetime.datetime.min
-        return dt.isoformat()
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     @property
     def content_type(self) -> str:
@@ -74,7 +74,6 @@ class FileProps:
     def props(self) -> dict[str, str]:
         props = {
             "D:displayname": self.name,
-            "D:getcontenttype": self.content_type,
             "D:creationdate": self.creationdate,
             "D:getlastmodified": self.lastmodified,
         }
@@ -122,11 +121,10 @@ class PropfindResponseBuilder:
             
             prop = Element("D:prop")
 
-            
+            resourcetype = Element("D:resourcetype")
             if self.is_dir:
-                resourcetype = Element("D:resourcetype")
                 resourcetype.append(Element("D:collection"))
-                prop.append(resourcetype)
+            prop.append(resourcetype)
 
             for key, value in self.properties.items():
                 prop_element = Element(key)
@@ -154,8 +152,12 @@ class PropfindResponseBuilder:
         for key, value in self.namespaces.items():
             multistatus.set(f"xmlns:{key}", value)
         document = ElementTree(multistatus)
+
+        #document.getroot().append(self._responses[0].to_element())
+
         for response in self._responses:
             document.getroot().append(response.to_element())
+        
         document.write(out, encoding="unicode", xml_declaration=True)
 
     def to_xml(self) -> str:

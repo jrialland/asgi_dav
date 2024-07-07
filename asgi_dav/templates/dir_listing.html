@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Index of {{ href }}</title>
+    <title>Index of {{ path }}</title>
     <style>
         body {
             font-family: sans-serif;
@@ -35,11 +35,11 @@
         }
 
         tr.dir td:first-child {
-            background: url("{{ make_data_url('folder.svg', 'image/svg+xml') }}");
+            background: url("{{ make_data_url('folder.svg') }}");
         }
 
         tr.file td:first-child {
-            background: url("{{ make_data_url('document.svg', 'image/svg+xml') }}");
+            background: url("{{ make_data_url('document.svg') }}");
         }
 
         footer {
@@ -53,7 +53,7 @@
 </head>
 
 <body>
-    <h1>Index of {{ href }}</hjson>
+    <h1>Index of {{ path }}</hjson>
         <table>
             <thead>
                 <tr>
@@ -69,7 +69,7 @@
                 {% if path != '/' %}
                 <tr class="dir">
                     <td>dir</td>
-                    <td><a href="..">..</a></td>
+                    <td><a href="{{ get_parent_href(href) }}">..</a></td>
                     <td></td>
                     <td></td>
                 </tr>
@@ -87,22 +87,10 @@
                     <td>{{ 'dir' if info.is_dir else 'file' }}</td>
                     <td><a href="{{ info.href }}">{{ info.name }}</a></td>
                     <td>
-                        {% if info.is_dir %}
-                        <em></em>
-                        {% else %}
-                        {% if info.content_type %}
-                        {{ info.content_type }}
-                        {% else %}
-                        <em></em>
-                        {% endif %}
-                        {% endif %}
+                        {{ '' if info.is_dir else info.content_type }}
                     </td>
                     <td>
-                        {% if info.is_dir %}
-                        <em></em>
-                        {% else %}
-                        {{ naturalsize(info.size) }}
-                        {% endif %}
+                        {{ '' if info.is_dir else naturalsize(info.size) }}
                     </td>
                     <td>{{ info.lastmodified }}</td>
                 </tr>
@@ -114,5 +102,4 @@
             <p>Powered by <a href="http://github.com/jrialland/asgi_dav">asgi_dav</a></p>
         </footer>
 </body>
-
 </html>

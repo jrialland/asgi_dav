@@ -18,6 +18,11 @@ No Resource Locking: This server does not support resource locking (yet)
 ASGI: The server is implemented as an ASGI module.
 fs Module: Utilizes the [pyfilesystem2](https://github.com/PyFilesystem/pyfilesystem2) module for filesystem access.
 
+# Installation
+```shell
+pip install git+https://github.com/jrialland/asgi_dav@main
+```
+
 # Usage (uvicorn)
 ```python
 from asgi_dav import DAVApp
@@ -38,8 +43,7 @@ from fs.memoryfs import MemoryFS # use an in-RAM filesystem for the example
 app = FastAPI()
 
 # Mount the DAVApp as a sub-application in FastAPI.
-dav_app = DAVApp(MemoryFS(), '/dav') # the second parameter makes http://localhost:8080/dav map to / in the filesystem
-app.mount("/dav", dav_app)
+app.mount("/dav", DAVApp(MemoryFS()))
 
 ```
 

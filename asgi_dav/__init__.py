@@ -149,7 +149,7 @@ class DAVApp(EventSupport):
                     )
                 else:
                     self.fs.move(path, destination, overwrite=overwrite)
-                    evtname, evt = "file.moved", FileRenamedEvent(
+                    evtname, evt = "file.moved", FileMovedEvent(
                         path=path, dest_path=destination
                     )
 
@@ -477,7 +477,8 @@ class DAVApp(EventSupport):
                             "more_body": True,
                         }
                     )
-
+            await self.emit("file.downloaded", FileDownloadedEvent(path=path))
+            
         await send(
             {
                 "type": "http.response.body",
@@ -485,7 +486,7 @@ class DAVApp(EventSupport):
             }
         )
 
-        await self.emit("file.downloaded", FileDownloadedEvent(path=path))
+        
 
     def get_first_header(self, scope: HTTPScope, name: str) -> str | None:
         headers = scope.get("headers", [])

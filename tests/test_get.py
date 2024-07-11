@@ -17,6 +17,12 @@ async def test_get_file_200():
     fs = MemoryFS()
     fs.writetext("/foo", "foo")
     app = DAVApp(fs)
+
+    async def on_file_downloaded(*args):
+        print("file downloaded")
+
+    app.on("file.downloaded", on_file_downloaded)
+    
     async with TestClient(app) as client:
         response = await client.get("/foo")
         assert response.status_code == 200

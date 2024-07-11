@@ -47,6 +47,24 @@ app.mount("/dav", DAVApp(MemoryFS()))
 
 ```
 
+# Events
+
+your program can be notified of filesystem changes : 
+
+```python
+from asgi_dav.events import FileUploadEvent
+
+async def print_uploaded_file(evt:FileUploadEvent):
+    print(f"File Uploaded : {evt.path}")
+
+davApp = DAVApp(MemoryFS()))
+
+davApp.on('file.uploaded', print_uploaded_file)
+
+#[...]
+
+```
+
 # License
 
 This project is licensed under the MIT License.

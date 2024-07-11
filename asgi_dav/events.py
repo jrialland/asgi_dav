@@ -95,13 +95,12 @@ class EventSupport:
         self.events: dict[eventname_t, set[str]] = {}
         self.subscriptions: dict[str, callback_t] = {}
 
-    def on(self, event: eventname_t, callback: callback_t) -> str:
+    def on(self, event: eventname_t|Literal["*"], callback: callback_t) -> str:
         subscription_id = str(uuid.uuid4())
         self.subscriptions[subscription_id] = callback
-
         subs = self.events.get(event, None)
         if not subs:
-            subs = set()
+            self.events[event] = subs = set()
         subs.add(subscription_id)
         return subscription_id
 
@@ -112,6 +111,11 @@ class EventSupport:
                 subs.remove(subscription_id)
 
     async def emit(self, event: eventname_t, *args, **kwargs):
+        for subscription_id in self.events.get("*", []):
+            try:
+                await self.subscriptions[subscription_id](*args, **kwargs)
+            except Exception as e:
+                logging.exception(event)
         for subscription_id in self.events.get(event, []):
             try:
                 await self.subscriptions[subscription_id](*args, **kwargs)

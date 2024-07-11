@@ -160,12 +160,8 @@ class PropfindResponseBuilder:
         for key, value in self.namespaces.items():
             multistatus.set(f"xmlns:{key}", value)
         document = ElementTree(multistatus)
-
-        # document.getroot().append(self._responses[0].to_element())
-
         for response in self._responses:
             document.getroot().append(response.to_element())
-
         document.write(out, encoding="unicode", xml_declaration=True)
 
     def to_xml(self) -> str:

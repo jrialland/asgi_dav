@@ -21,6 +21,7 @@ from hashlib import md5
 import http.client  # for HTTP status codes constants
 from .utils import concat_uri, make_data_url, get_parent_href
 from .props import FileProps, PropfindResponseBuilder
+from .events import *
 
 # ------------------------------------------------------------------------------
 __version__ = "0.1.0"
@@ -36,7 +37,7 @@ MAX_DIR_LISTING = 10000
 
 
 # ------------------------------------------------------------------------------
-class DAVApp:
+class DAVApp(EventSupport):
     """
     An ASGI application that handles WebDAV requests
     """
@@ -46,6 +47,7 @@ class DAVApp:
         Create a new DAVApp instance
         :param fs: the filesystem to use
         """
+        super().__init__()
         assert fs, "fs is required"
         self.fs = fs
         self.jinja_env = Environment(loader=PackageLoader(__name__, "templates"))
@@ -126,18 +128,31 @@ class DAVApp:
             destination = "/"
 
         overwrite = self.get_first_header(scope, "Overwrite") == "T"
-
+        evtname, evt = None, None
         try:
             if is_copy:
                 if self.fs.isdir(path):
                     self.fs.copydir(path, destination, create=True)
+                    evtname, evt = "directory.copied", DirectoryCopiedEvent(
+                        path=path, dest_path=destination
+                    )
                 else:
                     self.fs.copy(path, destination, overwrite=overwrite)
+                    evtname, evt = "file.copied", FileCopiedEvent(
+                        path=path, dest_path=destination
+                    )
             else:
                 if self.fs.isdir(path):
                     self.fs.movedir(path, destination, create=True)
+                    evtname, evt = "directory.moved", DirectoryMovedEvent(
+                        path=path, dest_path=destination
+                    )
                 else:
                     self.fs.move(path, destination, overwrite=overwrite)
+                    evtname, evt = "file.moved", FileRenamedEvent(
+                        path=path, dest_path=destination
+                    )
+
         except fs.errors.FileExpected:
             await self.respond(send, http.client.BAD_REQUEST, b"Bad Request")
             return
@@ -149,8 +164,10 @@ class DAVApp:
             return
 
         if is_copy:
+            await self.emit(evtname, evt)
             await self.respond(send, http.client.CREATED, b"Created")
         else:
+
             await self.respond(send, http.client.NO_CONTENT)
 
     async def get_or_head(
@@ -196,6 +213,7 @@ class DAVApp:
                 chunk = message["body"]
                 f.write(chunk)
                 remaining -= len(chunk)
+            await self.emit("file.uploaded", FileUploadedEvent(path=path))
         await self.respond(send, http.client.CREATED)
 
     async def delete(
@@ -205,8 +223,13 @@ class DAVApp:
         if not self.fs.exists(path):
             await self.respond(send, http.client.NOT_FOUND)
             return
-
-        self.fs.remove(path)
+        is_dir = self.fs.isdir(path)
+        if is_dir:
+            self.fs.removedir(path)
+            await self.emit("directory.deleted", DirectoryDeletedEvent(path=path))
+        else:
+            self.fs.remove(path)
+            await self.emit("file.deleted", FileDeletedEvent(path=path))
         await self.respond(send, http.client.NO_CONTENT)
 
     async def mkcol(
@@ -219,6 +242,7 @@ class DAVApp:
 
         self.fs.makedirs(path)
         await self.respond(send, http.client.CREATED)
+        await self.emit("directory.created", DirectoryCreatedEvent(path=path))
 
     async def propfind(
         self, scope: HTTPScope, receive: ASGIReceiveCallable, send: ASGISendCallable
@@ -410,7 +434,7 @@ class DAVApp:
             content_length = end - start + 1
             status = http.client.PARTIAL_CONTENT
             headers = [
-                (b"Content-Range", f"bytes {start}-{end}/{props.size}".encode()),
+                (b"Content-Range", f"bytes {start}-{end}/{fp.size}".encode()),
             ]
         else:
             start = 0
@@ -460,6 +484,8 @@ class DAVApp:
                 "body": b"",
             }
         )
+
+        await self.emit("file.downloaded", FileDownloadedEvent(path=path))
 
     def get_first_header(self, scope: HTTPScope, name: str) -> str | None:
         headers = scope.get("headers", [])
